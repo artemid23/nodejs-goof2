@@ -34,35 +34,72 @@ exports.index = function (req, res, next) {
     });
 };
 
-exports.loginHandler = function (req, res, next) {
+eexports.loginHandler = function (req, res, next) {
+  // Проверка, является ли переданное имя пользователя корректным email
   if (validator.isEmail(req.body.username)) {
-    User.find({ username: req.body.username, password: req.body.password }, function (err, users) {
-      if (users.length > 0) {
-        const redirectPage = req.body.redirectPage
-        const session = req.session
-        const username = req.body.username
-        return adminLoginSuccess(redirectPage, session, username, res)
+    // Поиск пользователя по имени пользователя и паролю
+    User.findOne({ username: req.body.username, password: req.body.password }, function (err, user) {
+      if (err) {
+        // Обработка ошибок, если они возникли во время запроса
+        return next(err);
+      }
+
+      if (user) {
+        // Если пользователь найден, установка необходимых сессионных данных и перенаправление
+        const redirectPage = req.body.redirectPage || '/admin';
+        req.session.loggedIn = true;
+        req.session.username = req.body.username;
+        return res.redirect(redirectPage);
       } else {
-        return res.status(401).send()
+        // Если пользователь не найден, возвращение кода состояния 401 (непрошедшая аутентификация)
+        return res.status(401).send();
       }
     });
   } else {
-    return res.status(401).send()
+    // Если переданное имя пользователя не является корректным email, возвращение кода состояния 401
+    return res.status(401).send();
   }
 };
 
-function adminLoginSuccess(redirectPage, session, username, res) {
-  session.loggedIn = 1
 
-  // Log the login action for audit
-  console.log(`User logged in: ${username}`)
 
-  if (redirectPage) {
-      return res.redirect(redirectPage)
-  } else {
-      return res.redirect('/admin')
-  }
+const allowedDomains = ['localhost:3001']; // Разрешенные домены
+
+function isAllowedDomain(url) {
+    try {
+        const hostname = new URL(url).host;
+        return allowedDomains.includes(hostname);
+    } catch (e) {
+        return false; // Если парсинг URL не удался, это не валидный URL
+    }
 }
+
+function adminLoginSuccess(redirectPage, session, username, res) {
+    session.loggedIn = 1;
+
+    // Логируем действие входа для аудита
+    console.log(`User logged in: ${username}`);
+
+    if (redirectPage && isAllowedDomain(redirectPage)) {
+        // Уведомляем пользователя о перенаправлении
+        res.send(`
+            <html>
+                <body>
+                    <p>Вы будете перенаправлены на: ${redirectPage}</p>
+                    <a href="${redirectPage}">Нажмите здесь, если вы не были перенаправлены автоматически</a>
+                    <script>
+                        setTimeout(function() {
+                            window.location.href = "${redirectPage}";
+                        }, 3000); // Задержка в 3 секунды для уведомления пользователя
+                    </script>
+                </body>
+            </html>
+        `);
+    } else {
+        return res.redirect('http://localhost:3001');
+    }
+}
+
 
 exports.login = function (req, res, next) {
   return res.render('admin', {
@@ -188,17 +225,36 @@ exports.create = function (req, res, next) {
 };
 
 exports.destroy = function (req, res, next) {
-  Todo.findById(req.params.id, function (err, todo) {
+  // Проверяем, является ли ID корректным ObjectId MongoDB
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).send('Invalid ID');
+  }
 
-    try {
-      todo.remove(function (err, todo) {
-        if (err) return next(err);
-        res.redirect('/');
-      });
-    } catch (e) {
+  // Поиск задачи по ID
+  Todo.findById(req.params.id, function (err, todo) {
+    if (err) {
+      // Обработка ошибок, если они возникли во время запроса
+      return next(err);
     }
+
+    if (!todo) {
+      // Если задача не найдена, возвращаем код состояния 404 (не найдено)
+      return res.status(404).send('Task not found');
+    }
+
+    // Удаление задачи
+    todo.remove(function (err, removedTodo) {
+      if (err) {
+        // Обработка ошибок, если они возникли при удалении
+        return next(err);
+      }
+
+      // Если задача успешно удалена, перенаправляем на главную страницу
+      res.redirect('/');
+    });
   });
 };
+
 
 exports.edit = function (req, res, next) {
   Todo.
@@ -216,17 +272,40 @@ exports.edit = function (req, res, next) {
 };
 
 exports.update = function (req, res, next) {
-  Todo.findById(req.params.id, function (err, todo) {
+  // Проверяем, является ли ID корректным ObjectId MongoDB
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).send('Invalid ID');
+  }
 
+  // Поиск задачи по ID
+  Todo.findById(req.params.id, function (err, todo) {
+    if (err) {
+      // Обработка ошибок, если они возникли во время запроса
+      return next(err);
+    }
+
+    if (!todo) {
+      // Если задача не найдена, возвращаем код состояния 404 (не найдено)
+      return res.status(404).send('Task not found');
+    }
+
+    // Обновление содержимого задачи и времени обновления
     todo.content = req.body.content;
     todo.updated_at = Date.now();
-    todo.save(function (err, todo, count) {
-      if (err) return next(err);
 
+    // Сохранение обновленной задачи
+    todo.save(function (err, updatedTodo) {
+      if (err) {
+        // Обработка ошибок, если они возникли при сохранении
+        return next(err);
+      }
+
+      // Если задача успешно обновлена, перенаправляем на главную страницу
       res.redirect('/');
     });
   });
 };
+
 
 // ** express turns the cookie key to lowercase **
 exports.current_user = function (req, res, next) {
